@@ -43,7 +43,7 @@ void AverageUpdater::updateZ(arr& z,
   for(auto i = 0; i < N; ++i)
   {
     const auto& x = xs[i];
-    const auto& lambda = DLs[i]->lambda;
+    //const auto& lambda = DLs[i]->lambda;
     const auto& var = vars[i];
 
     //arr zinc = x;
@@ -376,6 +376,8 @@ bool DecOptConstrained<T, U>::stepParallel()
   // update
   z_prev = z;
   updateZ();
+
+  return true;
 }
 
 template <typename T, typename U>
@@ -556,7 +558,7 @@ double DecOptConstrained<T, U>::primalResidual() const
 template <typename T, typename U>
 double DecOptConstrained<T, U>::dualResidual() const
 {
-  return DLs.front()->mu * length(z - z_prev);
+  return /*DLs.front()->mu **/ length(z - z_prev);
 }
 
 template <typename T, typename U>
