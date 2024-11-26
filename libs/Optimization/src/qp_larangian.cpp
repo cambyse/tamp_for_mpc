@@ -2,28 +2,20 @@
 
 namespace
 {
-arr extractGreaterThan0(const arr& a, const arr& mask)
+void setToZeroWhereNegative(arr& g, arr& Jg)
 {
-  auto b = a;
-
-  for(uint i = 0; i < a.d0; ++i)
+  for(uint i = 0; i < g.d0; ++i)
   {
-    if(mask(i) < 0)
+    if(g(i) < 0.0)
     {
-      if(b.nd == 1)
+      g(i) = 0.0;
+
+      for(auto j = 0; j < Jg.d1; ++j)
       {
-        b(i) = 0.0;
-      }
-      else
-      {
-        for(auto j = 0; j < b.d1; ++j)
-        {
-          b(i,j) = 0;
-        }
+        Jg(i,j) = 0;
       }
     }
   }
-  return b;
 }
 }
 
@@ -80,25 +72,31 @@ double QP_Lagrangian::lagrangian(arr& dL, arr& HL, const arr& _x) ///< CORE METH
   if(qp.K.d0)
   {
     g = qp.K * x - qp.u; // Jg = K
-    g_violations = extractGreaterThan0(g, g);
-    const auto& Jg = qp.K;
-    const auto Jg_violations = extractGreaterThan0(Jg, g);
 
-    // add value
-    L += scalarProduct(lambda, g);                        // lagrange term
-    L += mu * scalarProduct(g_violations, g_violations);  // square penalty
-
+    ///  lagrange term
+    L += scalarProduct(lambda, g);
     // jacobian
     if(!!dL)
     {
-      dL += comp_At_x(lambda, Jg);                             // lagrange term
-      dL += 2.0 * mu * comp_At_x(g_violations, Jg_violations); // square penalty
+      const auto& Jg = qp.K;
+      dL += comp_At_x(lambda, Jg);
+    }
+
+    /// square penalty
+    auto Jg = qp.K;
+    setToZeroWhereNegative(g, Jg);
+
+    L += mu * scalarProduct(g, g);
+    // jacobian
+    if(!!dL)
+    {
+      dL += 2.0 * mu * comp_At_x(g, Jg);
     }
 
     // hessian
     if(!!HL)
     {
-      HL += 2.0 * mu * comp_At_A(Jg_violations);              // square penalty
+      HL += 2.0 * mu * comp_At_A(Jg);
     }
   }
 
@@ -112,7 +110,7 @@ double QP_Lagrangian::get_costs()
 
 double QP_Lagrangian::get_sumOfGviolations()
 {
-  return sum(g_violations);
+  return sum(g); // asuming it is called after the lagrangian, the negative parts are already set to zero :)
 }
 
 double QP_Lagrangian::get_sumOfHviolations()

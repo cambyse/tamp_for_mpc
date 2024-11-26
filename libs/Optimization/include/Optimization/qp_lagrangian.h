@@ -42,7 +42,6 @@ private:
   arr x;            ///< last evaluated x
   double c{0.0};    ///< last evaluated cost
   arr g;            ///< Kx - u
-  arr g_violations; ///< Kx - u if > 0 else 0
 };
 
 template<>
