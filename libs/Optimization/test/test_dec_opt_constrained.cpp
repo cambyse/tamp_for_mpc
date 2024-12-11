@@ -292,7 +292,7 @@ TEST(DecentralizedAugmentedLagrangian, CallbackCall) {
 
   bool called=false;
   DecOptConfig options(PARALLEL, false);
-  options.callback = [&called]()
+  options.callback = [&called](auto&&...)
   {
     called = true;
   };
@@ -319,7 +319,7 @@ TEST(DecentralizedAugmentedLagrangian, CallbackCallWarmStart) {
   n1 = n2;
   DecOptConfig options(PARALLEL, false);
   options.opt.aulaMuInc = 1.0;
-  options.callback = [&n_called]()
+  options.callback = [&n_called](auto&&...)
   {
     n_called++;
   };
