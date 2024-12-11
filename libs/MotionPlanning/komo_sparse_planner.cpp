@@ -102,8 +102,8 @@ std::vector<intA> KOMOSparsePlanner::getSubProblemMasks( const std::vector<Vars>
 }
 
 void KOMOSparsePlanner::groundPolicyActionsJoint( const TreeBuilder & tree,
-                               Policy & policy,
-                               const std::shared_ptr< ExtensibleKOMO > & komo ) const
+                                                  Policy & policy,
+                                                  const std::shared_ptr< ExtensibleKOMO > & komo ) const
 {
   // traverse tree and ground symbols
   std::unordered_set<uint> visited;
