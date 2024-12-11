@@ -8,6 +8,55 @@
 #include <functional>
 #include <memory>
 
+#include <boost/asio.hpp>
+#include <mutex>
+#include <condition_variable>
+#include <atomic>
+
+class ThreadPoolWithNotification {
+public:
+    ThreadPoolWithNotification(const size_t numThreads)
+        : pool(numThreads), taskCount(0) {}
+
+    // Enqueue a task and increase the task count
+    template <typename Task>
+    void enqueueTask(Task task) {
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            ++taskCount;
+        }
+
+        boost::asio::post(pool, [this, task]() {
+            task();
+            onComplete();
+        });
+    }
+
+    // Wait until all tasks have completed
+    void waitForCompletion() {
+        std::unique_lock<std::mutex> lock(mutex);
+        completionCv.wait(lock, [this]() { return taskCount == 0; });
+    }
+
+    // Shutdown the pool
+    void shutdown() {
+        pool.join();
+    }
+
+private:
+    void onComplete() {
+        std::lock_guard<std::mutex> lock(mutex);
+        --taskCount;
+        if (taskCount == 0) {
+            completionCv.notify_all();
+        }
+    }
+
+    boost::asio::thread_pool pool;
+    std::atomic<int> taskCount;
+    std::mutex mutex;
+    std::condition_variable completionCv;
+};
 
 template< typename T>
 struct LagrangianTypes
@@ -93,6 +142,10 @@ struct DecOptConstrained
   bool subProblemsSolved{false}; ///< indicates whether the stopping criterion of each sub-problem is met (necessary for overall stopping condition)
   uint its{0}; ///< number of ADMM iterations
 
+  std::unique_ptr<ThreadPoolWithNotification> pool_; ///< pool of thread (used only when scheduling is thread pool)
+  std::vector<bool> solved_;
+  //std::unique_ptr<boost::asio::thread_pool> pool_; ///< pool of thread (used only when scheduling is thread pool)
+
   DecOptConfig config;
 
 public:
@@ -105,19 +158,21 @@ public:
    */
   DecOptConstrained(arr&_z, std::vector<std::shared_ptr<T>> & Ps, const std::vector<arr> & masks, const U & _zUpdater, DecOptConfig _config); //bool compressed = false, int verbose=-1, OptOptions _opt=NOOPT, ostream* _logFile=0);
 
-  std::vector<uint> run();
+  void run();
 
   DualState getDualState() const; // for enabling warm start
   void setDualState(const DualState& state);
 
 private:
   void initVars(const std::vector<arr> & xmasks);
-  void initXs();  // init xs based on z (typicaly called once at the start)
+  void initXs();         // init xs based on z (typicaly called once at the start)
   void initLagrangians(const std::vector<std::shared_ptr<T>> & Ps);
+  void initThreadPool(); // spawns threads (only if config is THREAD_POOL)
 
   bool step(); // outer step
   bool stepSequential(); // step each subproblem and update Z in sequence
   bool stepParallel();   // step each subproblem and update Z in //
+  bool stepThreadPool(); // step each subproblem and update Z in // using the thread pool
 
   bool step(DecLagrangianType& DL, OptNewton& newton, arr& dual, uint i) const; // inner step
 

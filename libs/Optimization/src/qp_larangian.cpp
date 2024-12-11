@@ -87,6 +87,7 @@ double QP_Lagrangian::lagrangian(arr& dL, arr& HL, const arr& _x) ///< CORE METH
     setToZeroWhereNegative(g, Jg);
 
     L += mu * scalarProduct(g, g);
+
     // jacobian
     if(!!dL)
     {
@@ -96,9 +97,14 @@ double QP_Lagrangian::lagrangian(arr& dL, arr& HL, const arr& _x) ///< CORE METH
     // hessian
     if(!!HL)
     {
-      HL += 2.0 * mu * comp_At_A(Jg);
+      HL += 2.0 * mu * comp_At_A(Jg); // computation of the gram product of the jacobian!
+      // idea: copute the hessian of each constraint separately only once, and only sum the precomputed hessian!
     }
   }
+
+//  std::cout << "Jg:" << qp.K.d0 << " " << qp.K.d1 << std::endl;
+//  std::cout << "Jacobian:" << dL.d0 << " " << dL.d1 << std::endl;
+//  std::cout << "Hessian:" << HL.d0 << " " << HL.d1 << std::endl;
 
   return L;
 }
@@ -141,12 +147,12 @@ void QP_Lagrangian::aulaUpdate(bool anyTimeVariant, double _, double muInc, doub
     // lambda(i) can't become negative though as it would mean pushing towards the constraints
   }
 
-  if(muInc>1. && mu<1e6) mu *= muInc;
+  if(muInc>1. && mu<1e5) mu *= muInc;
 
   //-- recompute the Lagrangian with the new parameters (its current value, gradient & hessian)
   if(L_x || !!dL_x || !!HL_x)
   {
-    double L = lagrangian(dL_x, HL_x, x); //reevaluate gradients and hessian (using buffered info)
+    double L = lagrangian(dL_x, HL_x, x); //re-evaluate gradients and hessian (using buffered info)
     if(L_x) *L_x = L;
   }
 }

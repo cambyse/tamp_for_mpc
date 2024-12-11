@@ -6,6 +6,9 @@
 
 struct QP_Problem
 {
+  // minimize 0.5 * xT * P * x + qTx
+  // s.t. Kx <= u
+
   const arr P;
   const arr q;
   const arr K;
@@ -17,6 +20,7 @@ struct QP_Problem
 
 private:
   arr qT;
+  // idea: compute an array of Jgi, and only sum them to compute the hessian (not sure it is better since the sum of the hessian for n constraints would still be cubic)
 };
 
 struct QP_Lagrangian : ScalarFunction

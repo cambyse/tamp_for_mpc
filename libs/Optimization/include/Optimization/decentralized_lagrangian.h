@@ -4,22 +4,26 @@
 #include <Optim/constrained.h>
 
 using CallBackType = std::function<void()>;
+using StepCallBackType = std::function<void(const arr& z, std::vector<arr>& xs, const std::vector<std::unique_ptr<OptNewton>>& newtons)>;
 
 enum Mode
 {
   SEQUENTIAL = 0,
   PARALLEL,
-  FIRST_ITERATION_SEQUENTIAL_THEN_PARALLEL // doesn't seem to perform very well on komo problems
+  FIRST_ITERATION_SEQUENTIAL_THEN_PARALLEL, // doesn't seem to perform very well on komo problems
+  THREAD_POOL,
 };
 
 struct DecOptConfig
 {
-  DecOptConfig(const Mode& scheduling, bool compressed, OptOptions opt=NOOPT, bool checkGradients=false, CallBackType callback = CallBackType(), ostream *logFile=nullptr)
+  DecOptConfig(const Mode& scheduling, bool compressed, OptOptions opt=NOOPT, bool checkGradients=false, StepCallBackType callback = {}, CallBackType run_start = CallBackType(), StepCallBackType run_end = {}, ostream *logFile=nullptr)
     : scheduling(scheduling)
     , compressed(compressed)
     , opt(opt)
     , checkGradients(checkGradients)
     , callback(callback)
+    , run_start_callback(run_start)
+    , run_end_callback(run_end)
     , logFile(logFile)
   {
   }
@@ -30,11 +34,13 @@ struct DecOptConfig
   OptOptions opt;  // for newton and aula
 
   bool checkGradients;
-  CallBackType callback; // called after each step() (for debugging)
+  StepCallBackType callback; // called after each step() (for debugging)
+  CallBackType run_start_callback; // called when starting the run method (for timing)
+  StepCallBackType run_end_callback;   // called when ending the run method (for timing)
   ostream *logFile;
 
-  double muInit{1.0};   // initial mu after first step
-  double muInc{1.0}; // mu increase
+  double muInit{1.0}; // initial mu after first step
+  double muInc{1.0};  // mu increase
 };
 
 template <typename T>

@@ -3,6 +3,7 @@
 
 #include <future>
 #include <thread>
+#include <boost/asio.hpp>
 
 namespace
 {
@@ -108,7 +109,7 @@ DecOptConstrained<T, U>::DecOptConstrained(arr& _z, std::vector<std::shared_ptr<
   , config(_config)
 {
   // maybe preferable to have the same pace for ADMM and AULA terms -> breaks convergence is set to 2.0, strange!
-  if(config.opt.aulaMuInc != 1.0) config.opt.aulaMuInc = std::min(1.2, config.opt.aulaMuInc);
+  //if(config.opt.aulaMuInc != 1.0) config.opt.aulaMuInc = std::min(1.2, config.opt.aulaMuInc);
 
   /// TO BE EQUIVALENT TO PYTHON
   //opt.damping = 0.1;
@@ -118,6 +119,7 @@ DecOptConstrained<T, U>::DecOptConstrained(arr& _z, std::vector<std::shared_ptr<
   initVars(masks);
   initXs();
   initLagrangians(Ps);
+  initThreadPool();
 }
 
 template <typename T, typename U>
@@ -232,15 +234,37 @@ void DecOptConstrained<T, U>::initLagrangians(const std::vector<std::shared_ptr<
 }
 
 template <typename T, typename U>
-std::vector<uint> DecOptConstrained<T, U>::run()
+void DecOptConstrained<T, U>::initThreadPool()
 {
+  //auto start = std::chrono::high_resolution_clock::now();
+  if(config.scheduling == Mode::THREAD_POOL)
+  {
+    const auto n_threads = N; //std::min(N, std::thread::hardware_concurrency());
+    // Launch the pool with four threads.
+    pool_ = std::make_unique<ThreadPoolWithNotification>(n_threads);
+    solved_.resize(N);
+
+    if(config.opt.verbose>0) {
+      std::cout << "** DecOptConstr. Launched thread pool with " << n_threads << " threads" << std::endl;
+    }
+  }
+}
+
+template <typename T, typename U>
+void DecOptConstrained<T, U>::run()
+{
+  if(config.run_start_callback)
+  {
+    config.run_start_callback();
+  }
+
   // loop
   while(!step())
   {
     if(config.callback)
     {
       z_final = z;
-      config.callback();
+      config.callback(z, xs, newtons);
     }
   }
 
@@ -253,14 +277,10 @@ std::vector<uint> DecOptConstrained<T, U>::run()
   // get solution
   z_final = z;
 
-  // number of evaluations
-  std::vector<uint> evals;
-  evals.reserve(Ls.size());
-  for(const auto& newton: newtons)
+  if(config.run_end_callback)
   {
-    evals.push_back(newton->evals);
+    config.run_end_callback(z, xs, newtons);
   }
-  return evals;
 }
 
 template <typename T, typename U>
@@ -291,7 +311,7 @@ void DecOptConstrained<T, U>::setDualState(const DualState& state)
 
     duals[i] = state.duals[i]; // needed?
     Ls[i]->lambda = state.duals[i];
-    Ls[i]->x = arr(); // force revaluation of langrangian
+    Ls[i]->x = arr(); // force re-evaluation of langrangian
     DLs[i]->lambda = state.admmDuals[i];
 
     // update newton cache / state (necessary because we updated the underlying problem by updating the ADMM params!!)
@@ -315,11 +335,21 @@ bool DecOptConstrained<T, U>::step()
   {
     stepParallel();
   }
+  else if(config.scheduling == THREAD_POOL)
+  {
+    stepThreadPool();
+  }
   else NIY;
 
   updateADMM(); // update lagrange parameters of ADMM terms based on updated Z (make all problems converge)
 
-  return stoppingCriterion();
+  const bool stop = stoppingCriterion();
+
+  ++its; if(config.opt.verbose>0) std::cout << std::endl;
+
+  //if(its > 10) return true;
+
+  return stop;
 }
 
 template <typename T, typename U>
@@ -345,6 +375,8 @@ bool DecOptConstrained<T, U>::stepSequential()
   // update
   z_prev = z;
   updateZ();
+
+  return true;
 }
 
 template <typename T, typename U>
@@ -359,7 +391,7 @@ bool DecOptConstrained<T, U>::stepParallel()
 
     // spawn threads
     DL.z = z;
-    futures.push_back(std::async((i > 0 ? std::launch::async : std::launch::deferred),
+    futures.push_back(std::async((i > 0 ? std::launch::async : std::launch::deferred), // std::launch::deferred, //
     [&, i]{
       return step(DL, newton, dual, i);
     }
@@ -372,6 +404,39 @@ bool DecOptConstrained<T, U>::stepParallel()
   {
     subProblemsSolved = futures[i].get() && subProblemsSolved;
   }
+
+  // update
+  z_prev = z;
+  updateZ();
+
+  return true;
+}
+
+template <typename T, typename U>
+bool DecOptConstrained<T, U>::stepThreadPool()
+{
+  std::fill(solved_.begin(), solved_.end(), false);
+  for(auto i = 0; i < N; ++i)
+  {
+//    std::cout << "Enqueuing task " << i << std::endl;
+
+    DecLagrangianType& DL = *DLs[i];
+    OptNewton& newton = *newtons[i];
+    arr& dual = duals[i];
+
+    DL.z = z;
+
+    pool_->enqueueTask([&, i]() {
+//                std::cout << "Executing task " << i << " on thread "
+//                          << std::this_thread::get_id() << std::endl;
+
+                solved_[i] = step(DL, newton, dual, i);
+            });
+  }
+
+  pool_->waitForCompletion();
+
+  subProblemsSolved = std::all_of(solved_.cbegin(), solved_.cend(), [](const bool solved){return solved;});
 
   // update
   z_prev = z;
@@ -496,8 +561,6 @@ void DecOptConstrained<T, U>::updateZ()
 template <typename T, typename U>
 void DecOptConstrained<T, U>::updateADMM()
 {
-  its++;
-
   for(auto i = 0; i < N; ++i)
   {
     OptNewton& newton = *newtons[i];
@@ -510,20 +573,30 @@ void DecOptConstrained<T, U>::updateADMM()
 template <typename T, typename U>
 bool DecOptConstrained<T, U>::stoppingCriterion() const
 {
-  double r = primalResidual();
-  double s = dualResidual();
+  const double r = primalResidual();
+  const double s = dualResidual();
+  const bool primalFeasibilityCrit = primalFeasibility(r);
+  const auto dualFeasibilityCrit = dualFeasibility(s);
 
   // stop criterion
   const auto& opt = config.opt;
   if(opt.verbose>0) {
-    cout <<"** DecOptConstr.[x] ADMM UPDATE";
-    cout <<"\t |x-z|=" << r;
+    cout <<"** DecOptConstr.[x] EVALUATE STOPPING CONDITIONS";
+    cout <<"\tsubProblemsSolved=" << subProblemsSolved;
+    cout <<"\tprimalFeasibility=" << primalFeasibilityCrit;
+    cout <<"\tdualFeasibility=" << dualFeasibilityCrit;
+    cout <<endl;
+
+    cout <<"** DecOptConstr.[x] EVALUATE STOPPING CONDITIONS";
+    cout <<"\tprimal residual(x_0, x_1, ..., z)=" << r;
+    cout <<"\tdual residual(z_prev, z)=" << s;
+    cout <<"\tdual |z_prev - z|=" << absMax(z - z_prev);
     if(z.d0 < 10) cout << '\t' << "z=" << z;
-    cout <<endl<<endl;
+    cout <<endl;
   }
 
   // nominal exit condition
-  if(subProblemsSolved && primalFeasibility(r) && dualFeasibility(s))
+  if(subProblemsSolved && primalFeasibilityCrit && dualFeasibilityCrit)
   {
     if(opt.verbose>0) cout <<"** ADMM StoppingCriterion Primal Dual convergence" << std::endl;
     return true;
